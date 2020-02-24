@@ -5,9 +5,11 @@ date:2020***
 personalrank main algo
 """
 from __future__ import division
+from scipy.sparse import coo_matrix
 import os
-import sys
 import operator
+from scipy.sparse.linalg import gmres
+import numpy as np
 
 
 def get_graph_from_data(input_file):
@@ -104,16 +106,129 @@ def personal_rank(graph, root, alpha, item_num, recom_num=10):
     return recom_result
 
 
+def graph_to_m(graph):
+    """
+    Args:
+        graph:user item graph
+    Return:
+        a coo_matrix, sparse mat M
+        a list, total user item point
+        a dict, map all the point to row index
+    """
+    vertex = []
+    for v, v_dic in graph.items():
+        vertex.append(v)
+    address_dict = {}
+    total_len = len(vertex)
+    for index in range(len(vertex)):
+        address_dict[vertex[index]] = index
+    row = []
+    col = []
+    data = []
+    for element_i in graph:
+        weight = round(1 / len(graph[element_i]), 3)
+        row_index = address_dict[element_i]
+        for element_j in graph[element_i]:
+            col_index = address_dict[element_j]
+            row.append(row_index)
+            col.append(col_index)
+            data.append(weight)
+    row = np.array(row)
+    col = np.array(col)
+    data = np.array(data)
+    m = coo_matrix((data, (row, col)), shape=(total_len, total_len))
+    return m, vertex, address_dict
+
+
+def mat_all_point(m_mat, vertex, alpha):
+    """
+    get E-alpha*m_mat.T
+    Args:
+        m_mat:
+        vertex: total item and user point
+        alpha: the prob for random walking
+    Return:
+        a sparse
+    """
+    total_len = len(vertex)
+    row = []
+    col = []
+    data = []
+    for index in range(total_len):
+        row.append(index)
+        col.append(index)
+        data.append(1)
+    row = np.array(row)
+    col = np.array(col)
+    data = np.array(data)
+    eye_t = coo_matrix((data, (row, col)), shape=(total_len, total_len))
+    return eye_t.tocsr() - alpha * m_mat.tocsr().transpose()
+
+
+def personal_rank_mat(graph, root, alpha, recom_num=10):
+    """
+    Args:
+        graph:user item graph
+        root:the fix user to recom
+        alpha:the prob to random walk
+        recom_num:recom item num
+    Return:
+        a dict, key: itemid, value: pr score
+    A*r = r0
+    """
+    m, vertex, address_dict = graph_to_m(graph)
+    if root not in address_dict:
+        return {}
+    score_dict = {}
+    recom_dict = {}
+    mat_all = mat_all_point(m, vertex, alpha)
+    index = address_dict[root]
+    initial_list = [[0] for row in range(len(vertex))]
+    initial_list[index] = [1]
+    r_zero = np.array(initial_list)
+    # 解线性方程
+    res = gmres(mat_all, r_zero, tol=1e-8)[0]
+    for index in range(len(res)):
+        point = vertex[index]
+        if len(point.strip().split("_")) < 2:
+            continue
+        if point in graph[root]:
+            continue
+        score_dict[point] = round(res[index], 3)
+    for zuhe in sorted(score_dict.items(), key=operator.itemgetter(1), reverse=True)[:recom_num]:
+        point, score = zuhe[0], zuhe[1]
+        recom_dict[point] = score
+    return recom_dict
+
+
 def get_one_user_recom():
     """
      give one fix user recom result
     """
-    user = "4"
+    user = "1"
     alpha = 0.8
     graph = get_graph_from_data("../data/ratings.txt")
     item_num = 100
-    return personal_rank(graph, user, alpha, item_num, 9)
+    return personal_rank(graph, user, alpha, item_num, 100)
+
+
+def get_one_user_by_mat():
+    """
+    give one fix user by mat
+    """
+    user = "1"
+    alpha = 0.8
+    graph = get_graph_from_data("../data/ratings.txt")
+    recom_result = personal_rank_mat(graph, user, alpha, 10)
+    return recom_result
 
 
 if __name__ == '__main__':
-    print(get_one_user_recom())
+    recom_result_base = get_one_user_recom()
+    recom_result_mat = get_one_user_by_mat()
+    print(recom_result_mat)
+    num = 0
+    for ele in recom_result_base:
+        if ele in recom_result_mat:
+            num += 1
+    # print(num)
